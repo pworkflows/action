@@ -125,21 +125,38 @@ jobs:
         id: commit
         env:
           GH_TOKEN: ${{ steps.gen-token.outputs.token }}
-        run: |          
-          RESPONSE=$(gh api --method POST \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2026-03-10" \
-              /repos/${{ github.repository }}/git/commits \
-              --input - <<< '{
-                "message": "chore(release): ${{ steps.set-version.outputs.tag_name }}",
-                "parents": [
-                  "${{ steps.prepare-commit.outputs.commit_hash }}"
-                ],
-                "tree": "${{ steps.prepare-commit.outputs.commit_hash }}",
-              }')
-          COMMIT_HASH=$(echo "$RESPONSE" | jq -r '.sha')
-          echo "commit_hash=$COMMIT_HASH" >> $GITHUB_OUTPUT
-          echo "✅ Commit created: $COMMIT_HASH"
+        run: |
+          #!/bin/bash
+          REPO="${{ github.repository }}"
+          BRANCH="${{ inputs.branch }}"
+          FILE_PATH=".github/version.json"
+          FILE_CONTENT=$(cat .github/version.json)
+          PARENT=$(gh api repos/$REPO/git/ref/heads/$BRANCH --jq '.object.sha')
+
+          BLOB=$(gh api -X POST repos/$REPO/git/blobs \
+            -f content="$(echo -n "$FILE_CONTENT" | base64)" \
+            -f encoding="base64" \
+            --jq '.sha')
+
+          TREE=$(gh api -X POST repos/$REPO/git/trees \
+            -f base_tree="$PARENT" \
+            -f tree="[{\"path\":\"$FILE_PATH\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"$BLOB\"}]" \
+            --jq '.sha')
+          echo "Tree SHA: $TREE"
+          RESPONSE=$(gh api -X POST repos/$REPO/git/commits \
+            -f message="chore(release): v2.0.0" \
+            -f tree="$TREE" \
+            -f parents="[$PARENT]" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2026-03-10")
+          COMMIT_SHA=$(echo "$RESPONSE" | jq -r '.sha')
+          echo "新提交哈希: $COMMIT_SHA"
+          gh api -X PATCH repos/$REPO/git/refs/heads/$BRANCH \
+            -f sha="$COMMIT_SHA" \
+            -f force=false
+
+          echo "commit_hash=$COMMIT_SHA" >> $GITHUB_OUTPUT
+          echo "✅ 提交已创建并推送，哈希: $COMMIT_SHA"
 
   tag:
     name: Create GPG signed tags
