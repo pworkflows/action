@@ -133,25 +133,45 @@ jobs:
           FILE_CONTENT=$(cat .github/version.json)
           PARENT=$(gh api repos/$REPO/git/ref/heads/$BRANCH --jq '.object.sha')
 
-          BLOB=$(gh api -X POST repos/$REPO/git/blobs \
-            -f content="$(echo -n "$FILE_CONTENT" | base64)" \
-            -f encoding="base64" \
-            --jq '.sha')
-
-          TREE=$(gh api -X POST repos/$REPO/git/trees \
-            -f base_tree="$PARENT" \
-            -f tree="[{\"path\":\"$FILE_PATH\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"$BLOB\"}]" \
-            --jq '.sha')
+          BLOB_RESPONSE=$(jq -n \
+            --arg content "$(echo -n "$FILE_CONTENT" | base64)" \
+            '{content: $content, encoding: "base64"}' \
+            | gh api -X POST repos/$REPO/git/blobs --input -)
+            BLOB=$(echo "$BLOB_RESPONSE" | jq -r '.sha')
+          echo "Blob SHA: $BLOB"
+          
+          # 3. 创建 Tree（同样用 jq 生成 JSON）
+            TREE_RESPONSE=$(jq -n \
+            --arg base "$PARENT" \
+            --arg path "$FILE_PATH" \
+            --arg blob "$BLOB" \
+            '{
+          base_tree: $base,
+          tree: [{
+            path: $path,
+            mode: "100644",
+            type: "blob",
+            sha: $blob
+          }]
+          }' | gh api -X POST repos/$REPO/git/trees --input -)
+          TREE=$(echo "$TREE_RESPONSE" | jq -r '.sha')
           echo "Tree SHA: $TREE"
-          RESPONSE=$(gh api -X POST repos/$REPO/git/commits \
-            -f message="chore(release): v2.0.0" \
-            -f tree="$TREE" \
-            -f parents="[$PARENT]" \
+          
+          # 4. 创建 Commit
+            COMMIT_RESPONSE=$(jq -n \
+          --arg msg "chore(release): v2.0.0" \
+            --arg tree "$TREE" \
+            --arg parent "$PARENT" \
+            '{
+              message: $msg,
+              tree: $tree,
+              parents: [$parent]
+            }' | gh api -X POST repos/$REPO/git/commits \
             -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2026-03-10")
-          COMMIT_SHA=$(echo "$RESPONSE" | jq -r '.sha')
-          echo "新提交哈希: $COMMIT_SHA"
-          gh api -X PATCH repos/$REPO/git/refs/heads/$BRANCH \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            --input -)
+            COMMIT_SHA=$(echo "$COMMIT_RESPONSE" | jq -r '.sha')
+            gh api -X PATCH repos/$REPO/git/refs/heads/$BRANCH \
             -f sha="$COMMIT_SHA" \
             -f force=false
 
