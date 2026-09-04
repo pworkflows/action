@@ -109,17 +109,19 @@ jobs:
           jq --arg v "$NEW_VERSION" '.action = $v' .github/version.json > tmp.json
           mv tmp.json .github/version.json
           echo "✅ Version bumped to v$NEW_VERSION"
+
       - name: Git config
         run: |
+          git config user.name "${{ inputs.git-commit-user-name }}"
+          git config user.email "${{ inputs.git-commit-user-email }}"
           git add .github/version.json
-
 
       - name: Commit
         uses: dsanders11/github-app-commit-action@v2
         with:
           message: "chore(release): ${{ steps.set-version.outputs.tag_name }}"
-          commit-author: 'github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>'
           token: ${{ steps.gen-token.outputs.token }}
+
       - name: Commit and push
         id: commit
         run: |
