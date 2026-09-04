@@ -172,8 +172,8 @@ jobs:
             --input -)
             COMMIT_SHA=$(echo "$COMMIT_RESPONSE" | jq -r '.sha')
             gh api -X PATCH repos/$REPO/git/refs/heads/$BRANCH \
-            -f sha="$COMMIT_SHA" \
-            -f force=false
+            -F sha="$COMMIT_SHA" \
+            -F force=false
 
           echo "commit_hash=$COMMIT_SHA" >> $GITHUB_OUTPUT
           echo "✅ 提交已创建并推送，哈希: $COMMIT_SHA"
