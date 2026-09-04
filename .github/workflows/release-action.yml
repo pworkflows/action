@@ -123,6 +123,8 @@ jobs:
 
       - name: Commit and push
         id: commit
+        env:
+          GH_TOKEN: ${{ steps.gen-token.outputs.token }}
         run: |          
           RESPONSE=$(gh api --method POST \
               -H "Accept: application/vnd.github+json" \
