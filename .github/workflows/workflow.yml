@@ -1,0 +1,35 @@
+name: workflow.yml
+on:
+  workflow_dispatch:
+    inputs:
+      bump-type:
+        description: 'Version bump type (patch, minor, major)'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        required: true
+      is-latest:
+        description: 'Whether this is the latest release'
+        type: boolean
+        required: true
+
+jobs:
+  test:
+    uses: pworkflows/action/.github/workflows/release-action.yml@main
+    with:
+      branch: main
+      bump-type: ${{ inputs.bump-type }}
+      commit-app-client-id: ${{ vars.COMMIT_APP_CLIENT_ID }}
+      git-commit-user-name: commit-assistant[bot]
+      git-commit-user-email: 322095391+commit-assistant[bot]@users.noreply.github.com
+      tag-app-client-id: ${{ vars.TAG_APP_CLIENT_ID }}
+      git-tag-user-name: Pueraria lobata[bot]
+      git-tag-user-email: 438707985@qq.com
+      gpg-key-id: ${{ vars.GPG_KEY_ID }}
+      is-latest: ${{ inputs.is-latest }}
+    secrets:
+      COMMIT_APP_PRIVATE_KEY: ${{ secrets.COMMIT_APP_PRIVATE_KEY }}
+      TAG_APP_PRIVATE_KEY: ${{ secrets.TAG_APP_PRIVATE_KEY }}
+      GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}

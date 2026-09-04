@@ -1,0 +1,215 @@
+name: Release Action
+
+on:
+  workflow_call:
+    inputs:
+      branch:
+        description: 'Target branch to checkout'
+        type: string
+        required: true
+      bump-type:
+        description: 'Version bump type (patch, minor, major)'
+        type: string
+        required: true
+      commit-app-client-id:
+        description: 'GitHub App Client ID for commit'
+        type: string
+        required: true
+      git-commit-user-name:
+        description: 'Git user name for commit (Bot Identity)'
+        type: string
+        required: true
+      git-commit-user-email:
+        description: 'Git user email for commit (Bot Email)'
+        type: string
+        required: true
+      tag-app-client-id:
+        description: 'GitHub App Client ID for tag'
+        type: string
+        required: true
+      git-tag-user-name:
+        description: 'Git user name for tag'
+        type: string
+        required: true
+      git-tag-user-email:
+        description: 'Git user email for tag'
+        type: string
+        required: true
+      gpg-key-id:
+        description: 'GPG Key ID for signing tags'
+        type: string
+        required: true
+      is-latest:
+        description: 'Whether '
+        type: boolean
+        required: false
+        default: true
+    secrets:
+      COMMIT_APP_PRIVATE_KEY:
+        description: 'GitHub App Private Key'
+        required: true
+      TAG_APP_PRIVATE_KEY:
+        description: 'GitHub App Private Key for tag'
+        required: true
+      GPG_PRIVATE_KEY:
+        description: 'GPG Private Key for signing tags'
+        required: true
+
+jobs:
+  prepare:
+    name: Update version.json and commit
+    runs-on: ubuntu-latest
+    outputs:
+      major-bump: ${{ steps.set-version.outputs.major_bump }}
+      major-version: ${{ steps.set-version.outputs.major_version }}
+      tag-name: ${{ steps.set-version.outputs.tag_name }}
+      commit-hash: ${{ steps.commit.outputs.commit_hash }}
+    steps:
+      - name: Generate GitHub App Token
+        id: gen-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.commit-app-client-id }}
+          private-key: ${{ secrets.COMMIT_APP_PRIVATE_KEY }}
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          token: ${{ steps.gen-token.outputs.token }}
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+
+      - name: Read and bump version
+        id: set-version
+        env:
+          BUMP_TYPE: ${{ inputs.bump-type }}
+        run: |
+          CURRENT_VERSION=$(jq -r '.action' .github/version.json)
+          IFS='.' read -r major minor patch <<< "$CURRENT_VERSION"
+
+          if [ "$BUMP_TYPE" == "major" ]; then
+              echo "major_bump=true" >> $GITHUB_OUTPUT
+              major=$((major + 1))
+              minor=0
+              patch=0
+          else
+              echo "major_bump=false" >> $GITHUB_OUTPUT
+              if [ "$BUMP_TYPE" == "patch" ]; then
+                  patch=$((patch + 1))
+              elif [ "$BUMP_TYPE" == "minor" ]; then
+                  minor=$((minor + 1))
+                  patch=0
+              fi
+          fi
+
+          NEW_VERSION="${major}.${minor}.${patch}"
+          echo "tag_name=v${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "major_version=${major}" >> $GITHUB_OUTPUT
+
+          jq --arg v "$NEW_VERSION" '.action = $v' .github/version.json > tmp.json
+          mv tmp.json .github/version.json
+          echo "✅ Version bumped to v$NEW_VERSION"
+
+      - name: Commit and push
+        id: commit-and-push
+        run: |
+          git config user.name "${{ inputs.git-commit-user-name }}"
+          git config user.email "${{ inputs.git-commit-user-email }}"
+          git add .github/version.json
+          git commit -m "chore(release): ${{ steps.set-version.outputs.tag_name }}"
+          git push origin ${{ inputs.branch }}
+          COMMIT_HASH=$(git rev-parse HEAD)
+          echo "commit_hash=$COMMIT_HASH" >> $GITHUB_OUTPUT
+          echo "✅ Commit created: $COMMIT_HASH"
+
+  tag:
+    name: Create GPG signed tags
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App Token
+        id: gen-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.tag-app-client-id }}
+          private-key: ${{ secrets.TAG_APP_PRIVATE_KEY }}
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          token: ${{ steps.gen-token.outputs.token }}
+          ref: ${{ needs.prepare.outputs.commit-hash }}
+          fetch-depth: 0
+
+      - name: Import GPG private key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          printenv GPG_PRIVATE_KEY > /tmp/private.key
+          gpg --batch --import < /tmp/private.key
+          # printf '%s:6:\n' "${{ inputs.gpg-key-id }}" | gpg --import-ownertrust
+          shred -zu /tmp/private.key
+
+      - name: Configure Git for Tag (Real User Identity)
+        run: |
+          git config user.name "${{ inputs.git-tag-user-name }}"
+          git config user.email "${{ inputs.git-tag-user-email }}"
+          git config user.signingkey "${{ inputs.gpg-key-id }}"
+          git config tag.gpgsign true
+
+      - name: Create and push version tag
+        run: |
+          TAG="${{ needs.prepare.outputs.tag-name }}"
+          git tag "${TAG}" -s -m "Release ${TAG}"
+          git push origin "${TAG}"
+          echo "✅ Tag ${TAG} pushed"
+
+      - name: Move
+        if: ${{ needs.prepare.outputs.major-bump == 'false' }}
+        env:
+          MAJOR_VERSION: ${{ needs.prepare.outputs.major-version }}
+        run: |
+          git tag -f "v${MAJOR_VERSION}" -s -m "Release v${MAJOR_VERSION} (moved)"
+          git push -f origin "v${MAJOR_VERSION}"
+          echo "✅ Major tag v${MAJOR_VERSION} moved."
+      - name: Move
+        if: ${{ needs.prepare.outputs.major-bump == 'true' }}
+        env:
+          MAJOR_VERSION: ${{ needs.prepare.outputs.major-version }}
+        run: |
+          git tag "v${MAJOR_VERSION}" -s -m "Release v${MAJOR_VERSION}"
+          git push origin "v${MAJOR_VERSION}"
+          echo "✅ New major tag v${MAJOR_VERSION} created."
+
+  release:
+    name: Create GitHub Release
+    needs:
+      - prepare
+      - tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.commit-hash }}
+          fetch-depth: 0
+
+      - name: Create latest Release
+        if: ${{ inputs.is-latest == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.prepare.outputs.tag-name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          gh release create "${TAG_NAME}" --title "${TAG_NAME}" --notes "" --latest
+
+      - name: Create Release
+        if: ${{ inputs.is-latest == 'false' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.prepare.outputs.tag-name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          gh release create "${TAG_NAME}" --title "${TAG_NAME}" --notes ""
