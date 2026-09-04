@@ -120,6 +120,7 @@ jobs:
         uses: dsanders11/github-app-commit-action@v2
         with:
           message: "chore(release): ${{ steps.set-version.outputs.tag_name }}"
+          commit-author: commit-assistant[bot] <322095391+commit-assistant[bot]@users.noreply.github.com>
           token: ${{ steps.gen-token.outputs.token }}
 
       - name: Commit and push
