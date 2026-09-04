@@ -125,7 +125,7 @@ jobs:
       - name: Commit and push
         id: commit
         run: |
-          git push origin ${{ inputs.branch }}
+          git pull
           COMMIT_HASH=$(git rev-parse HEAD)
           echo "commit_hash=$COMMIT_HASH" >> $GITHUB_OUTPUT
           echo "✅ Commit created: $COMMIT_HASH"
