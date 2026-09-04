@@ -110,16 +110,33 @@ jobs:
           mv tmp.json .github/version.json
           echo "✅ Version bumped to v$NEW_VERSION"
 
-      - name: Git config
-        id: commit
+      - name: Commit and push
+        id: prepare-commit
         run: |
           git config user.name "${{ inputs.git-commit-user-name }}"
           git config user.email "${{ inputs.git-commit-user-email }}"
+          TREE_SHA=$(git write-tree)
+          PARENT_SHA=$(git rev-parse HEAD)
+          echo "tree_sha=$TREE_SHA" >> $GITHUB_OUTPUT
+          echo "parent_sha=$PARENT_SHA" >> $GITHUB_OUTPUT
           git add .github/version.json
-          git commit -m "chore(release): ${{ steps.set-version.outputs.tag_name }}"
-          COMMIT_HASH=$(git rev-parse HEAD)
+
+      - name: Commit and push
+        id: commit
+        run: |          
+          RESPONSE=$(gh api --method POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              /repos/${{ github.repository }}/git/commits \
+              --input - <<< '{
+                "message": "chore(release): ${{ steps.set-version.outputs.tag_name }}",
+                "parents": [
+                  "${{ steps.prepare-commit.outputs.commit_hash }}"
+                ],
+                "tree": "${{ steps.prepare-commit.outputs.commit_hash }}",
+              }')
+          COMMIT_HASH=$(echo "$RESPONSE" | jq -r '.sha')
           echo "commit_hash=$COMMIT_HASH" >> $GITHUB_OUTPUT
-          git push https://x-access-token:${{ steps.gen-token.outputs.token }}@github.com/${{ github.repository }}.git HEAD:main          
           echo "✅ Commit created: $COMMIT_HASH"
 
   tag:
